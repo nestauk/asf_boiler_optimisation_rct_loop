@@ -18,33 +18,26 @@ library(lmtest) #-------- Robust SEs
 library(sandwich) #------ Robust SEs
 
 # Data pathways
-bas_dir <- "C:/Users/oli.berry/Documents/GitHub/asf_boiler_optimisation_rct_loop/"
+bas_dir <- "C:/Users/oli.berry/Documents/GitHub/asf_loop_flex_rct/"
 data_path <- file.path(bas_dir, "1_Data")
 out_dir <- file.path(bas_dir, "3_Outputs")
 
 # Set seed
 set.seed(20230103)
-
+start_time <- Sys.time()
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 ### ~~~ Summary of code ~~~ ###
 
-## This code is used to randomise Loop's customers into one of three experimental
-## arms: Treatment 1 (T1), Treatment 2 (T2), or Control group (C)
+## This code conducts simulated power calculations for the Loop Flexibility RCT.
+## The outcome is electricity consumption during a Demand Flexibility Service event.
+## The data comprise electricity consumption the most recent event (Wh) for 
+## customers of Loop who have opted into the scheme overall.
 
-## We used stratified randomisation to achieve this, stratifying on region. This
-## is because region correlates with gas consumption because of weather and other
-## regional factors.
-
-## Additionally, we allocate customers in Treatment 1 or Treatment 2 to one of 
-## four email variants, as follows:
- ## 1) Standard email
- ## 2) Thermostat advice variant
- ## 3) TRV advice variant
- ## 4) Social norms variant
-
-## This will be achieved using simple randomisation.
+## The code randomly allocates each customer to either a Treatment group or a 
+## Control group. It then uses the standard error of the Treatment estimate to
+## determine the minimum detectable effect.
 
 
 
@@ -54,8 +47,6 @@ set.seed(20230103)
 # Import dummy data
 data <- read_csv(paste(data_path, "EventData.csv", sep="/")) |>
   janitor::clean_names()
-  
-## This can be ignored when using the correct dataset.
 
 #~~~ Cleaning and exploring
 head(data)
@@ -68,6 +59,9 @@ data <- data |>
     took_part == "FALSE" ~ 0,
     TRUE ~ 99
   ))
+
+## Note, opting in to an event is our secondary outcome measure. We don't use
+## this variable for the power calculations, but it is helpful to see.
 
 
 
@@ -83,27 +77,34 @@ nrow(data) ## 14,616 rows
 length(data$usage[data$usage == 0]) ## 348 zeros (roughly 2%)
 
 #~~~ Graphing
-hist(data$usage) ## Looks very skewed
+hist(data$usage, breaks = 1e3) ## Looks very skewed, with a lot of zeros
 
-hist(log(data$usage[data$usage != 0])) ## Looks more normal
-hist(log(data$usage) +1)
+hist(log(data$usage[data$usage != 0]), breaks = 1e3) ## Looks more normal
+hist(log(data$usage) +1, breaks = 1e3)
 
 
 # ~~ II. Opt ins ~~ #
+
 summary(data$opt_in)
 tabyl(data$opt_in) # 61% opt-in
 
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-### ~~~ Part 2: Looping ~~~ ###
-## Addressing research questions
+### ~~~ Part 2: Power calculations ~~~ ###
+## This is achieved using simulations
 
 # ~~ I. Setting up loop ~~ #
 
 #~~~ Parameters
-sample_seq <- seq(1e3, 14e3, 500) ## To use all available sample.
+sample_seq <- seq(1e3, 14e3, 500)
+
+## NOTE TO REVIEWER - running all simulations takes under 5 minutes. You can
+## reduce the number of simulations if you'd like.
+
 sims <- length(sample_seq) * 30 ## Number of simulations
+##sims <- length(sample_seq) * 3 ## Number of simulations
+
 sim <- 0
 
 # Looping
@@ -120,8 +121,8 @@ for (i in 1:sims) {
      mutate(rand = runif(1)) |> ## Generating random number
       arrange(rand) ## Sorting by random number
   
-  # Subsetting
-  sample <- sample_seq[(sim %% (length(sample_seq)) +1)]
+  # Subsetting to correct sample size
+  sample <- sample_seq[(sim %% (length(sample_seq)) +1)] ## This is a way to subsequently sample from sample_seq
   
   data_to_use <- data_to_use |>
     filter(row_number() <= sample)
@@ -142,13 +143,13 @@ for (i in 1:sims) {
   
   if (sim <= length(sample_seq) * 10) {
     
-  type <- "OLS"
-  
-  # Fit model
-  fit <- lm(usage ~ treatment, data = data_to_use)
-  
-  # Robust SEs
-  fit_coef <- coeftest(fit, vcov. = vcovHC, type = "HC3")
+    type <- "OLS"
+    
+    # Fit model
+    fit <- lm(usage ~ treatment, data = data_to_use)
+    
+    # Robust SEs
+    fit_coef <- coeftest(fit, vcov. = vcovHC, type = "HC3")
   
   
   } else if (sim <= length(sample_seq) * 20) {
@@ -260,6 +261,10 @@ output_table$mde_prop[output_table$type != "OLS"] <- output_table$mde[output_tab
 
 #~~~ Export
 write.csv(output_table, file = paste(out_dir,"flex_power_arms.csv", sep = "/"))
+
+# Checking time to run code
+end_time <- Sys.time()
+end_time - start_time
 
 
 
